@@ -3,7 +3,10 @@
             [uncomplicate.clojurecuda.core
                :as clojurecuda.c
                :refer [memcpy-host! mem-alloc]]
-            [clojure.repl :refer [source doc]]))
+            
+            [clojure.repl :refer [source doc]]
+            
+            [mikera.image.core :as img]))
 
 
 (defn make-fn! [source] ; Must be executed in a CUDA context!
@@ -27,31 +30,35 @@
   
   
   (def sample-source
-    "extern \"C\" __device__ float innercall1 (const float x, const float y, const int i) {
-       return x + y * i;
-     };
-
-     extern \"C\" __global__ void example_kernel (const int n, const float *a, float *b, const float c) {
-       int i = blockIdx.x * blockDim.x + threadIdx.x;
-       if (i < n) {
-         b[i] = innercall1(a[i], c, i);
+    "extern \"C\" __global__ void grayscale_img (const int res, unsigned char *im) {
+       const int x = blockIdx.x * blockDim.x + threadIdx.x;
+       const int y = blockIdx.y * blockDim.y + threadIdx.y;
+       
+       if (x < res && y < res) {
+         im[y * res + x] = (x + 2 * y) & 0xFF;
        }
      };")
   
+  (def res 256)
+  (def image (java.awt.image.BufferedImage. res res java.awt.image.BufferedImage/TYPE_BYTE_GRAY))
   
   (clojurecuda.c/with-context (clojurecuda.c/context gpu)
-    (let [kernel-fn    (make-fn! sample-source)
-          input-cpu    (float-array (range n-elems)) ; 0, 1, 2, ...
-          input-gpu    (mem-alloc n-elems)
-          output-gpu   (mem-alloc n-elems)]
-      
-      (memcpy-host! input-cpu input-gpu)
-      (launch! kernel-fn (clojurecuda.c/grid-1d n-elems) n-elems input-gpu output-gpu (Float. 1.23))
-      
-      (def output-cpu (memcpy-host! output-gpu (float-array n-elems)))))
+    (let [buffer-cpu   (-> image .getRaster .getDataBuffer .getData)
+          n-elems      (count buffer-cpu)
+          output-gpu   (mem-alloc n-elems)
+          
+          kernel-fn    (make-fn! sample-source)
+          _            (launch! kernel-fn (clojurecuda.c/grid-2d res res) res output-gpu)
+          result-cpu   (memcpy-host! output-gpu (byte-array n-elems))]
+      (System/arraycopy result-cpu 0 buffer-cpu 0 n-elems)))
   
   
-  (take 10 output-cpu))
+  (img/show image :title "Image"))
+
+
+(comment
+  (take 10 (-> image .getRaster .getDataBuffer .getData))
+  (-> image .getRaster .getDataBuffer .getData count))
   
 
 (defn -main []
