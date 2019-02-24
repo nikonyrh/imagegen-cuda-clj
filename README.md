@@ -1,7 +1,7 @@
 # imagegen-cuda-clj
 
-A Clojure app to ... well, that part is up to you.
+A proof-of-consept project using CUDA via [uncomplicate.clojurecuda](https://github.com/uncomplicate/clojurecuda)
+to generate a BufferedImage. I'll be using this as a starting point for future projects, and trying to figure
+out what is the best way of handling these GPU resources and contexts.
 
-## Usage
-
-FIXME
+![sample1](samples/sample1.jpg)

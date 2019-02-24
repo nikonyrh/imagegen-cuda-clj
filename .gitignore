@@ -4,5 +4,6 @@
 !*.sh
 !*.md
 !resources/public/css/site.css
+!assets
 target/
 !.gitignore

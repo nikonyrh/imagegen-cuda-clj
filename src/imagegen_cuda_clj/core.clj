@@ -4,7 +4,9 @@
             [clojure.repl :refer [source doc]]
             [clojure.pprint :refer [pprint]]
             
-            [mikera.image.core :as img]))
+            [mikera.image.core :as img]
+            
+            [nikonyrh-utilities-clj.core :as u]))
 
 
 (set! *warn-on-reflection* true)
@@ -13,8 +15,9 @@
 (cc.core/init)
 (def gpu (cc.core/device 0))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; I am not sure if we are heading to a better place, or worse...
-(def ^java.util.concurrent.ArrayBlockingQueue fn-queue (java.util.concurrent.ArrayBlockingQueue. 1))
+(def ^java.util.concurrent.ArrayBlockingQueue fn-queue (java.util.concurrent.ArrayBlockingQueue. 32))
 
 (def ^java.lang.Thread fn-queue-prosessor
   (let [thread
@@ -32,34 +35,32 @@
 
 
 (defn call-cuda-fn [^Callable f]
-  (loop []
-    (assert (not= java.lang.Thread$State/TERMINATED (.getState fn-queue-prosessor)))
-    (let [result-p (promise)]
-      (if (.offer fn-queue [f result-p])
-        (let [result (deref result-p 1000 :timeout)]
-          (assert (not= result :timeout))
-          (when (instance? java.lang.Exception result)
-            (println "Exception")
-            (throw result))
-          result)
-        (do
-          (println "retrying offer for call-cuda-fn")
-          (Thread/sleep 100)
-          (recur))))))
+  (assert (not= java.lang.Thread$State/TERMINATED (.getState fn-queue-prosessor)))
+  (let [result-p (promise)
+        _ (assert (.offer fn-queue [f result-p]) "fn-queue is full!")
+        result (deref result-p 1000 :timeout)]
+    (assert (not= result :timeout))
+    (if (instance? java.lang.Exception result)
+      (throw result)
+      result)))
 
 
 
 (comment
+  ; To stop the fn-queue-prosessor thread...
   (call-cuda-fn #(/ 0))
   
-  [(.getId (Thread/currentThread))
-   (call-cuda-fn #(.getId (Thread/currentThread)))]
-
+  ; To confirm that we are running our CUDA calls consistently in the same thread,
+  ; ref. https://dragan.rocks/articles/18/Interactive-GPU-Programming-3-CUDA-Context
+  (let [thread-id-fn #(.getId (Thread/currentThread))]
+    [(thread-id-fn) (call-cuda-fn thread-id-fn)])
+ 
+  ; A few simple tests
   (call-cuda-fn #(+ 1 2 3))
-  (time (call-cuda-fn #(do (Thread/sleep 500) (println "jee")))))
+  (time (call-cuda-fn #(do (Thread/sleep 500) (println "yes!")))))
 
 
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defmacro cudafn [name args & body]
   `(defn ~name ~args
     (call-cuda-fn (fn [] ~@body))))
@@ -84,49 +85,77 @@
   (cc.core/launch! kernel-fn grid (apply cc.core/parameters parameters)))
 
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(def kernel-fn
+  (make-fn!
+    (let [eps "1e-6f"
+          pi  "3.141592653589793f"
+          pi2 "6.283185307179586f"]
+      (u/my-format "
+    extern \"C\" __device__ int rgb(const int r, const int g, const int b) {
+      return (0xFF << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
+    }
+    
+    extern \"C\" __device__ float to_log(const int i, const int res) {
+      const float f = ((float) i) / ((float) (res - 1)) * (1.0f - 2 * {%s:eps}) + {%s:eps};
+      return logf(f / (1.0f - f));
+    }
+    
+    extern \"C\" __device__ float to_normal(const float l) {
+      return 1.0f / (1.0f + expf(-l));
+    }
+    
+    extern \"C\" __device__ float pow2(const float a) {
+      return a * a;
+    }
+    
+    extern \"C\" __global__ void rgb_img(const int res, int *im) {
+      const int x = blockIdx.x * blockDim.x + threadIdx.x;
+      const int y = blockIdx.y * blockDim.y + threadIdx.y;
+      
+      const int subres = res / 4, bx = x / subres, by = y / subres;
+
+      if (x < res && y < res) {
+        const float
+          i = to_log(x & (subres - 1), subres),
+          j = to_log(y & (subres - 1), subres),
+        
+          d = expf(-0.35f * (pow2(i - 0.5f) + pow2(j - 0.5f))),
+          
+          k1 = 1.0f + 2.0f * bx,
+          k2 = 0.5f + 0.5f * by,
+          
+          r = to_normal(i + k1 * d * sinf(j * k2 * {%s:pi2})),
+          g = to_normal(j + k1 * d * cosf(i * k2 * {%s:pi2})),
+          b = to_normal((i + j) * 0.5f);
+        
+        im[y * res + x] = rgb(r * 255.0f + 0.5f, g * 255.0f + 0.5f, b * 255.0f + 0.5f);
+      }
+    }
+"))))
+
+
+
+(defn ^java.awt.image.BufferedImage render-image [res]
+  (let [^java.awt.image.BufferedImage image (java.awt.image.BufferedImage. res res java.awt.image.BufferedImage/TYPE_INT_RGB)
+        ^java.awt.image.DataBufferInt buffer (-> image .getRaster .getDataBuffer)
+        bytes-per-elem 4
+        data-cpu    (-> buffer .getData)
+        n-elems     (count data-cpu)
+        output-gpu  (mem-alloc (* bytes-per-elem n-elems))]
+    (launch! kernel-fn (cc.core/grid-2d res res 16 16) res output-gpu)
+    (System/arraycopy (memcpy-host! output-gpu (int-array n-elems)) 0 data-cpu 0 n-elems)
+    image))
+
+
 (comment
   (->> (cc.core/device-count) range (map cc.core/device) (map commons.core/info) clojure.pprint/pprint)
   
-  (def res 1024)
-  (def ^java.awt.image.BufferedImage image (java.awt.image.BufferedImage. res res java.awt.image.BufferedImage/TYPE_BYTE_GRAY))
-  
-  (let [^java.awt.image.DataBufferByte buffer (-> image .getRaster .getDataBuffer)]
-    (->> buffer .getBankData (map count)))
-  
-  (def sample-source "
-    extern \"C\" __device__ unsigned int rgb (const unsigned int r, const unsigned int g, const unsigned int b) {
-       return 0xFF; // (0xFF << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
-    }
-    
-    extern \"C\" __global__ void rgb_img (const int res, unsigned char *im) {
-       const int x = blockIdx.x * blockDim.x + threadIdx.x;
-       const int y = blockIdx.y * blockDim.y + threadIdx.y;
-       
-       if (x < res && y < res) {
-         //im[y * res + x] = rgb(x + y * y / 256, 2 * x + y, x * x / 256 + y);
-         im[y * res + x] = (x + 2 * y) & 0xFF; // rgb(x, y, x + y);
-       }
-     };")
-  
-  
-  (let [^java.awt.image.DataBufferByte buffer (-> image .getRaster .getDataBuffer)
-        data-cpu     (-> buffer .getData)
-        n-elems      (count data-cpu)
-        output-gpu   (mem-alloc n-elems)
-        
-        kernel-fn    (make-fn! sample-source)
-        _            (launch! kernel-fn (cc.core/grid-2d res res 32 32) res output-gpu)
-        result-cpu   (memcpy-host! output-gpu (byte-array n-elems))]
-    (System/arraycopy result-cpu 0 data-cpu 0 n-elems))
-  
-  (println (System/nanoTime))
+  (def image (render-image 1024))
   (img/show image :title "Image"))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
-(comment
-  (take 10 (-> image .getRaster .getDataBuffer .getData))
-  (-> image .getRaster .getDataBuffer .getData count))
-  
 
 (defn -main []
-  (println "Hello, World!"))
+  (let [image (render-image 1024)]
+    (javax.imageio.ImageIO/write image "JPG" (java.io.File. "image.jpg"))))
