@@ -20,8 +20,11 @@
   (let [thread
         (-> #(with-context (context gpu)
                (loop []
-                 (when-let [[^Callable f result] (.poll fn-queue 60000 java.util.concurrent.TimeUnit/MILLISECONDS)]
-                   (deliver result (f)))
+                 (when-let [[^Callable f result-p] (.poll fn-queue 60000 java.util.concurrent.TimeUnit/MILLISECONDS)]
+                   (try (deliver result-p (f))
+                     (catch Exception e
+                       (deliver result-p e)
+                       (throw e))))
                  (recur)))
           (Thread. "fn-queue-prosessor"))]
     (.start thread)
@@ -31,9 +34,14 @@
 (defn call-cuda-fn [^Callable f]
   (loop []
     (assert (not= java.lang.Thread$State/TERMINATED (.getState fn-queue-prosessor)))
-    (let [result (promise)]
-      (if (.offer fn-queue [f result])
-        @result
+    (let [result-p (promise)]
+      (if (.offer fn-queue [f result-p])
+        (let [result (deref result-p 1000 :timeout)]
+          (assert (not= result :timeout))
+          (when (instance? java.lang.Exception result)
+            (println "Exception")
+            (throw result))
+          result)
         (do
           (println "retrying offer for call-cuda-fn")
           (Thread/sleep 100)
@@ -42,7 +50,7 @@
 
 
 (comment
-  (call-cuda-fn #(assert false))
+  (call-cuda-fn #(/ 0))
   
   [(.getId (Thread/currentThread))
    (call-cuda-fn #(.getId (Thread/currentThread)))]
@@ -79,17 +87,24 @@
 (comment
   (->> (cc.core/device-count) range (map cc.core/device) (map commons.core/info) clojure.pprint/pprint)
   
-  (def res 512)
+  (def res 1024)
   (def ^java.awt.image.BufferedImage image (java.awt.image.BufferedImage. res res java.awt.image.BufferedImage/TYPE_BYTE_GRAY))
   
+  (let [^java.awt.image.DataBufferByte buffer (-> image .getRaster .getDataBuffer)]
+    (->> buffer .getBankData (map count)))
   
-  (def sample-source
-    "extern \"C\" __global__ void grayscale_img (const int res, unsigned char *im) {
+  (def sample-source "
+    extern \"C\" __device__ unsigned int rgb (const unsigned int r, const unsigned int g, const unsigned int b) {
+       return 0xFF; // (0xFF << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
+    }
+    
+    extern \"C\" __global__ void rgb_img (const int res, unsigned char *im) {
        const int x = blockIdx.x * blockDim.x + threadIdx.x;
        const int y = blockIdx.y * blockDim.y + threadIdx.y;
        
        if (x < res && y < res) {
-         im[y * res + x] = (x + y * y / 256) & 0xFF;
+         //im[y * res + x] = rgb(x + y * y / 256, 2 * x + y, x * x / 256 + y);
+         im[y * res + x] = (x + 2 * y) & 0xFF; // rgb(x, y, x + y);
        }
      };")
   
@@ -100,11 +115,11 @@
         output-gpu   (mem-alloc n-elems)
         
         kernel-fn    (make-fn! sample-source)
-        _            (launch! kernel-fn (cc.core/grid-2d res res) res output-gpu)
+        _            (launch! kernel-fn (cc.core/grid-2d res res 32 32) res output-gpu)
         result-cpu   (memcpy-host! output-gpu (byte-array n-elems))]
     (System/arraycopy result-cpu 0 data-cpu 0 n-elems))
   
-  
+  (println (System/nanoTime))
   (img/show image :title "Image"))
 
 
