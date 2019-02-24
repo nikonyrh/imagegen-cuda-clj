@@ -14,57 +14,54 @@
 (def gpu (cc.core/device 0))
 
 ; I am not sure if we are heading to a better place, or worse...
-(def ^java.util.concurrent.ArrayBlockingQueue fn-queue     (java.util.concurrent.ArrayBlockingQueue. 1))
-(def ^java.util.concurrent.ArrayBlockingQueue result-queue (java.util.concurrent.ArrayBlockingQueue. 1))
+(def ^java.util.concurrent.ArrayBlockingQueue fn-queue (java.util.concurrent.ArrayBlockingQueue. 1))
 
 (def ^java.lang.Thread fn-queue-prosessor
   (let [thread
-        (Thread.
-          #(let [ctx (context gpu)]
-             (with-context ctx
+        (-> #(with-context (context gpu)
                (loop []
-                 (when-let [^Callable f (.poll fn-queue 60000 java.util.concurrent.TimeUnit/MILLISECONDS)]
-                   (assert (zero? (.size result-queue)))
-                   (.add result-queue {:result (f)}))
-                 (recur))))
-          "fn-queue-prosessor")]
+                 (when-let [[^Callable f result] (.poll fn-queue 60000 java.util.concurrent.TimeUnit/MILLISECONDS)]
+                   (deliver result (f)))
+                 (recur)))
+          (Thread. "fn-queue-prosessor"))]
     (.start thread)
     thread))
 
 
-(defn push-cuda-fn [^Callable f]
+(defn call-cuda-fn [^Callable f]
   (loop []
-    (if (.offer fn-queue f)
-      (let [result (.poll result-queue 1000 java.util.concurrent.TimeUnit/MILLISECONDS)]
-        (assert result)
-        (:result result))
-      (do
-        (assert (not= java.lang.Thread$State/TERMINATED (.getState fn-queue-prosessor)))
-        (println "waiting for push-cuda-fn")
-        (Thread/sleep 100)))))
+    (assert (not= java.lang.Thread$State/TERMINATED (.getState fn-queue-prosessor)))
+    (let [result (promise)]
+      (if (.offer fn-queue [f result])
+        @result
+        (do
+          (println "retrying offer for call-cuda-fn")
+          (Thread/sleep 100)
+          (recur))))))
 
 
 
 (comment
-  (push-cuda-fn #(assert false))
+  (call-cuda-fn #(assert false))
   
   [(.getId (Thread/currentThread))
-   (push-cuda-fn #(.getId (Thread/currentThread)))]
+   (call-cuda-fn #(.getId (Thread/currentThread)))]
 
-  (push-cuda-fn #(+ 1 2 3))
-  (time (push-cuda-fn #(do (Thread/sleep 500) (println "jee")))))
+  (call-cuda-fn #(+ 1 2 3))
+  (time (call-cuda-fn #(do (Thread/sleep 500) (println "jee")))))
 
 
 
 (defmacro cudafn [name args & body]
   `(defn ~name ~args
-    (let [f# (fn [] ~@body)]
-      (push-cuda-fn f#))))
+    (call-cuda-fn (fn [] ~@body))))
+
+(defmacro cudafn-wrap [name]
+  `(cudafn ~name  [& ~'args] (apply ~(symbol (str "cc.core/" name)) ~'args)))
 
 
-; TODO: A macro for this?
-(cudafn memcpy-host! [& args] (apply cc.core/memcpy-host! args))
-(cudafn mem-alloc    [& args] (apply cc.core/mem-alloc    args))
+(cudafn-wrap memcpy-host!)
+(cudafn-wrap mem-alloc)
 
 
 (cudafn make-fn! [source]
@@ -82,6 +79,9 @@
 (comment
   (->> (cc.core/device-count) range (map cc.core/device) (map commons.core/info) clojure.pprint/pprint)
   
+  (def res 512)
+  (def ^java.awt.image.BufferedImage image (java.awt.image.BufferedImage. res res java.awt.image.BufferedImage/TYPE_BYTE_GRAY))
+  
   
   (def sample-source
     "extern \"C\" __global__ void grayscale_img (const int res, unsigned char *im) {
@@ -89,13 +89,10 @@
        const int y = blockIdx.y * blockDim.y + threadIdx.y;
        
        if (x < res && y < res) {
-         im[y * res + x] = (x + y + y * y / 32) & 0xFF;
+         im[y * res + x] = (x + y * y / 256) & 0xFF;
        }
      };")
   
-  
-  (def res 256)
-  (def ^java.awt.image.BufferedImage image (java.awt.image.BufferedImage. res res java.awt.image.BufferedImage/TYPE_BYTE_GRAY))
   
   (let [^java.awt.image.DataBufferByte buffer (-> image .getRaster .getDataBuffer)
         data-cpu     (-> buffer .getData)
