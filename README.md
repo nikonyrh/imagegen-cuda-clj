@@ -4,4 +4,4 @@ A proof-of-consept project using CUDA via [uncomplicate.clojurecuda](https://git
 to generate a BufferedImage. I'll be using this as a starting point for future projects, and trying to figure
 out what is the best way of handling these GPU resources and contexts.
 
-![sample1](samples/sample1.jpg)
+![sample1](assets/sample1.jpg)
