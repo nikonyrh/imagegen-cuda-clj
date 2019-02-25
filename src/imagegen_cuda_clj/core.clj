@@ -70,6 +70,7 @@
 
 
 (cudafn-wrap memcpy-host!)
+(cudafn-wrap synchronize!)
 (cudafn-wrap mem-alloc)
 
 

@@ -1,6 +1,10 @@
 *
 !*/
+!Dockerfile
+!*.txt
 !*.clj*
+!*.py
+!*.m
 !*.sh
 !*.md
 !resources/public/css/site.css

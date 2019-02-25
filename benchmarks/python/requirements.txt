@@ -1,0 +1,8 @@
+# Package>=version                # package manager
+
+numba=0.36.2                      # conda
+numpy=1.13.3                      # conda
+scipy=1.0.0                       # conda
+scikit-learn=0.19.1               # conda
+Cython>=0.28.4                    # pip
+
