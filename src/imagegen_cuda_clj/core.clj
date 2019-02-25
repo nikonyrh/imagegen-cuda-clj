@@ -153,7 +153,24 @@
 (comment
   (->> (cc.core/device-count) range (map cc.core/device) (map commons.core/info) clojure.pprint/pprint)
   
-  (def image (render-image 1024))
+  (println "")
+  (doseq [res (for [i (range 6 15)] (bit-shift-left 1 i))]
+    (let [render-fn (make-renderer res)
+          n-iter    20
+          t-mean
+          (->> (for [_ (range n-iter)]
+                 (let [t0 (System/nanoTime)
+                       _  (render-fn)
+                       t1 (System/nanoTime)]
+                   (- t1 t0)))
+               (apply +)
+               (* 1e-6 (/ n-iter)))]
+      (println (u/my-format "Done in {%10.3f:t-mean} ms ({%4d:res} x {%4d:res})"))))
+  
+  
+  (def render-fn (make-renderer 1024))
+  
+  (def image (render-fn))
   (img/show image :title "Image"))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
