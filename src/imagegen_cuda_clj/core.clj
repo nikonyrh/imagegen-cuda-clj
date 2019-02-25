@@ -114,12 +114,12 @@
       const int y = blockIdx.y * blockDim.y + threadIdx.y;
       
       const int subres = res / 4, bx = x / subres, by = y / subres;
-
+      
       if (x < res && y < res) {
         const float
           i = to_log(x & (subres - 1), subres),
           j = to_log(y & (subres - 1), subres),
-        
+          
           d = expf(-0.35f * (pow2(i - 0.5f) + pow2(j - 0.5f))),
           
           k1 = 1.0f + 2.0f * bx,
@@ -136,16 +136,18 @@
 
 
 
-(defn ^java.awt.image.BufferedImage render-image [res]
+(defn ^java.awt.image.BufferedImage make-renderer [res]
+  ; Initializing resources and returning a closure.
   (let [^java.awt.image.BufferedImage image (java.awt.image.BufferedImage. res res java.awt.image.BufferedImage/TYPE_INT_RGB)
         ^java.awt.image.DataBufferInt buffer (-> image .getRaster .getDataBuffer)
         bytes-per-elem 4
         data-cpu    (-> buffer .getData)
         n-elems     (count data-cpu)
         output-gpu  (mem-alloc (* bytes-per-elem n-elems))]
-    (launch! kernel-fn (cc.core/grid-2d res res 16 16) res output-gpu)
-    (System/arraycopy (memcpy-host! output-gpu (int-array n-elems)) 0 data-cpu 0 n-elems)
-    image))
+   (fn [] ; kernel arguments would go here
+     (launch! kernel-fn (cc.core/grid-2d res res 16 16) res output-gpu)
+     (memcpy-host! output-gpu data-cpu)
+     image)))
 
 
 (comment
