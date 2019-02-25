@@ -159,5 +159,7 @@
 
 
 (defn -main []
-  (let [image (render-image 1024)]
-    (javax.imageio.ImageIO/write image "JPG" (java.io.File. "image.jpg"))))
+  (let [render-fn (make-renderer 1024)
+        image     (render-fn)
+        file      (java.io.File. "image.jpg")]
+    (javax.imageio.ImageIO/write image "JPG" file)))
