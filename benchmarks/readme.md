@@ -47,7 +47,13 @@ JCuda     v1b |  0.135 |  0.225 |  0.222 |   0.246 |   0.452  |    1.008 |     4
 
 Notes:
 
+- At times Octave was using only 1 core, I'm not sure why. Memory management?
+- Python was using at max only 3 - 3.5 cores, although the CPU has 4 cores + hyperthreading,
+I'm not sure why. Memory management?
 - JCuda `v1b` measures only the kernel execution time, `v1a` includes also the time it takes to
 transfer results from GPU to RAM. On larger images this step takes the majority of the time.
 Note that `launch!` is synchronous so you need to call `synchronize!` to get correct results.
+- JCuda doesn't use any dynamically allocated memory since all of the temporary values are kept
+in registers or spilled to GPU's RAM. Instead it sets the grid size dynamically based on the
+resulting image's resolution.
 
