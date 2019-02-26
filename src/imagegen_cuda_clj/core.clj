@@ -106,10 +106,6 @@
       return 1.0f / (1.0f + expf(-l));
     }
     
-    extern \"C\" __device__ float pow2(const float a) {
-      return a * a;
-    }
-    
     extern \"C\" __global__ void rgb_img(const int res, int *im) {
       const int x = blockIdx.x * blockDim.x + threadIdx.x;
       const int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -121,7 +117,7 @@
           i = to_log(x & (subres - 1), subres),
           j = to_log(y & (subres - 1), subres),
           
-          d = expf(-0.35f * (pow2(i - 0.5f) + pow2(j - 0.5f))),
+          d = expf(-0.35f * (i * i + j * j)),
           
           k1 = 1.0f + 2.0f * bx,
           k2 = 0.5f + 0.5f * by,
