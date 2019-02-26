@@ -150,6 +150,13 @@
 (comment
   (->> (cc.core/device-count) range (map cc.core/device) (map commons.core/info) clojure.pprint/pprint)
   
+  (def render-fn (make-renderer 1024))
+  
+  (def image (render-fn))
+  (img/show image :title "Image"))
+
+
+(comment
   (println "")
   (doseq [res (for [i (range 6 15)] (bit-shift-left 1 i))]
     (let [render-fn (make-renderer res)
@@ -162,16 +169,10 @@
                    (- t1 t0)))
                (apply +)
                (* 1e-6 (/ n-iter)))]
-      (println (u/my-format "Done in {%10.3f:t-mean} ms ({%4d:res} x {%4d:res})"))))
-  
-  
-  (def render-fn (make-renderer 1024))
-  
-  (def image (render-fn))
-  (img/show image :title "Image"))
+      (println (u/my-format "Done in {%10.3f:t-mean} ms ({%4d:res} x {%4d:res})")))))
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
 (defn -main []
   (let [render-fn (make-renderer 1024)
         image     (render-fn)
