@@ -52,7 +52,7 @@ Notes:
 I'm not sure why. Memory management?
 - JCuda `v1b` measures only the kernel execution time, `v1a` includes also the time it takes to
 transfer results from GPU to RAM. On larger images this step takes the majority of the time.
-Note that `launch!` is synchronous so you need to call `synchronize!` to get correct results.
+Note that `launch!` is *asynchronous* so you need to call `synchronize!` to benchmark correctly.
 - JCuda doesn't use any dynamically allocated memory since all of the temporary values are kept
 in registers or spilled to GPU's RAM. Instead it sets the grid size dynamically based on the
 resulting image's resolution.
